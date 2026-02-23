@@ -1,7 +1,8 @@
-import {sortCollection, sortMap} from "../lib/sort.js";
+// Импортируем только sortMap, sortCollection больше не нужен
+import {sortMap} from "../lib/sort.js";
 
 export function initSorting(columns) {
-    return (data, state, action) => {
+    return (query, state, action) => {
         let field = null;
         let order = null;
 
@@ -27,6 +28,10 @@ export function initSorting(columns) {
             });
         }
 
-        return sortCollection(data, field, order);
-    }
+        // Сохраняем параметр сортировки в виде field:direction
+        const sort = (field && order !== 'none') ? `${field}:${order}` : null;
+
+        // Если есть сортировка, добавляем к query, если нет — возвращаем query без изменений
+        return sort ? Object.assign({}, query, { sort }) : query;
+    };
 }
