@@ -1,44 +1,60 @@
-// Удаляем импорт compare.js, так как он больше не нужен
-// import {createComparison, defaultRules} from "../lib/compare.js";
-
+// components/filtering.js
 export function initFiltering(elements) {
-    // Функция для обновления индексов (заполнения селектов опциями)
     const updateIndexes = (elements, indexes) => {
         Object.keys(indexes).forEach((elementName) => {
-            elements[elementName].append(...Object.values(indexes[elementName]).map(name => {
-                const el = document.createElement('option');
-                el.textContent = name;
-                el.value = name;
-                return el;
-            }))
+            const select = elements[elementName];
+            if (select) {
+                // Очищаем существующие опции, кроме первой
+                while (select.options.length > 1) {
+                    select.remove(1);
+                }
+                
+                // Добавляем новые опции
+                Object.values(indexes[elementName]).forEach(name => {
+                    const el = document.createElement('option');
+                    el.textContent = name;
+                    el.value = name;
+                    select.appendChild(el);
+                });
+            }
         });
-    };
+    }
 
-    // Функция для применения фильтрации к запросу
     const applyFiltering = (query, state, action) => {
-        // @todo: #4.2 — обработать очистку поля
+        // Обрабатываем очистку поля
         if (action && action.name === 'clear') {
             const parent = action.closest('.filter-wrapper');
             const input = parent.querySelector('input');
-            input.value = '';
-            state[action.dataset.field] = '';
+            if (input) {
+                input.value = '';
+                state[action.dataset.field] = '';
+            }
         }
 
-        // @todo: #4.5 — отфильтровать данные, используя компаратор
+        // Формируем параметры фильтрации
         const filter = {};
         Object.keys(elements).forEach(key => {
-            if (elements[key]) {
-                // Ищем поля ввода в фильтре с непустыми данными
-                if (['INPUT', 'SELECT'].includes(elements[key].tagName) && elements[key].value) {
-                    // Чтобы сформировать в query вложенный объект фильтра
-                    filter[`filter[${elements[key].name}]`] = elements[key].value;
+            const element = elements[key];
+            if (element) {
+                // Проверяем, является ли элемент полем ввода фильтра (не пагинации и не поиска)
+                const isFilterField = ['searchByDate', 'searchByCustomer', 'searchBySeller', 'totalFrom', 'totalTo'].includes(key);
+                
+                if (isFilterField && ['INPUT', 'SELECT'].includes(element.tagName) && element.value) {
+                    filter[`filter[${element.name}]`] = element.value;
                 }
             }
         });
 
-        // Если в фильтре что-то добавилось, применим к запросу
+        // Для range полей (totalFrom/totalTo) нужно специальное формирование
+        if (elements.totalFrom && elements.totalFrom.value) {
+            filter['filter[totalFrom]'] = elements.totalFrom.value;
+        }
+        if (elements.totalTo && elements.totalTo.value) {
+            filter['filter[totalTo]'] = elements.totalTo.value;
+        }
+
         return Object.keys(filter).length ? Object.assign({}, query, filter) : query;
-    };
+    }
 
     return {
         updateIndexes,
