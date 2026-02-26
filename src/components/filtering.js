@@ -18,7 +18,7 @@ export function initFiltering(elements) {
                 });
             }
         });
-    }
+    };
 
     const applyFiltering = (query, state, action) => {
         // Обрабатываем очистку поля
@@ -36,7 +36,7 @@ export function initFiltering(elements) {
         Object.keys(elements).forEach(key => {
             const element = elements[key];
             if (element) {
-                // Проверяем, является ли элемент полем ввода фильтра (не пагинации и не поиска)
+                // Проверяем, является ли элемент полем ввода фильтра
                 const isFilterField = ['searchByDate', 'searchByCustomer', 'searchBySeller', 'totalFrom', 'totalTo'].includes(key);
                 
                 if (isFilterField && ['INPUT', 'SELECT'].includes(element.tagName) && element.value) {
@@ -45,16 +45,8 @@ export function initFiltering(elements) {
             }
         });
 
-        // Для range полей (totalFrom/totalTo) нужно специальное формирование
-        if (elements.totalFrom && elements.totalFrom.value) {
-            filter['filter[totalFrom]'] = elements.totalFrom.value;
-        }
-        if (elements.totalTo && elements.totalTo.value) {
-            filter['filter[totalTo]'] = elements.totalTo.value;
-        }
-
         return Object.keys(filter).length ? Object.assign({}, query, filter) : query;
-    }
+    };
 
     return {
         updateIndexes,
