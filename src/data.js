@@ -15,8 +15,12 @@ export function initData(sourceData) {
 
   // Функция для создания индексов из массива объектов
   const createIndex = (array, idField, formatter) => {
+    if (!array || !Array.isArray(array)) return {};
+    
     return array.reduce((acc, item) => {
-      acc[item[idField]] = formatter ? formatter(item) : item;
+      if (item && item[idField]) {
+        acc[item[idField]] = formatter ? formatter(item) : item;
+      }
       return acc;
     }, {});
   };
@@ -26,11 +30,11 @@ export function initData(sourceData) {
     if (!data || !Array.isArray(data)) return [];
     
     return data.map((item) => ({
-      id: item.receipt_id,
-      date: item.date,
-      seller: sellers ? sellers[item.seller_id] : item.seller_id,
-      customer: customers ? customers[item.customer_id] : item.customer_id,
-      total: item.total_amount,
+      id: item.receipt_id || item.id,
+      date: item.date || '',
+      seller: sellers && sellers[item.seller_id] ? sellers[item.seller_id] : item.seller_id || '',
+      customer: customers && customers[item.customer_id] ? customers[item.customer_id] : item.customer_id || '',
+      total: item.total_amount || item.total || 0,
     }));
   };
 
@@ -46,89 +50,127 @@ export function initData(sourceData) {
     });
 
     try {
+      console.log(`Fetching from ${url.toString()}`);
       const response = await fetch(url.toString());
+      
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      return await response.json();
+      
+      const data = await response.json();
+      console.log(`Received data from ${endpoint}:`, data);
+      return data;
     } catch (error) {
       console.error(`Error fetching from ${endpoint}:`, error);
-      throw error; // Пробрасываем ошибку дальше для обработки
+      throw error;
     }
   };
 
   // функция получения индексов с сервера
   const getIndexes = async () => {
+    // Проверяем кеш
+    if (sellers && customers) {
+      console.log('Using cached indexes');
+      return formatIndexes();
+    }
+
     try {
-      // Всегда пытаемся загрузить с сервера
+      // Пытаемся загрузить с сервера
+      console.log('Fetching indexes from server...');
       const [sellersData, customersData] = await Promise.all([
-        fetchFromServer('/sellers'),
-        fetchFromServer('/customers')
+        fetchFromServer('/sellers').catch(err => {
+          console.warn('Failed to fetch sellers, using local data');
+          return null;
+        }),
+        fetchFromServer('/customers').catch(err => {
+          console.warn('Failed to fetch customers, using local data');
+          return null;
+        })
       ]);
 
-      // Создаем индексы из серверных данных
-      sellers = createIndex(
-        sellersData,
-        "id",
-        (v) => `${v.first_name} ${v.last_name}`,
-      );
-      
-      customers = createIndex(
-        customersData,
-        "id",
-        (v) => `${v.first_name} ${v.last_name}`,
-      );
+      // Если серверные данные получены, используем их
+      if (sellersData && Array.isArray(sellersData) && sellersData.length > 0) {
+        sellers = createIndex(
+          sellersData,
+          "id",
+          (v) => `${v.first_name || ''} ${v.last_name || ''}`.trim() || v.name || v.id,
+        );
+      }
 
-      // Преобразуем индексы в формат для отображения в селектах
-      const sellerOptions = {};
-      const customerOptions = {};
+      if (customersData && Array.isArray(customersData) && customersData.length > 0) {
+        customers = createIndex(
+          customersData,
+          "id",
+          (v) => `${v.first_name || ''} ${v.last_name || ''}`.trim() || v.name || v.id,
+        );
+      }
 
-      Object.values(sellers).forEach((name) => {
-        sellerOptions[name] = name;
-      });
+      // Если серверные данные не получены, используем локальные
+      if (!sellers || Object.keys(sellers).length === 0) {
+        console.log('Using local sellers data');
+        sellers = createIndex(
+          sourceData.sellers || [],
+          "id",
+          (v) => `${v.first_name || ''} ${v.last_name || ''}`.trim(),
+        );
+      }
 
-      Object.values(customers).forEach((name) => {
-        customerOptions[name] = name;
-      });
+      if (!customers || Object.keys(customers).length === 0) {
+        console.log('Using local customers data');
+        customers = createIndex(
+          sourceData.customers || [],
+          "id",
+          (v) => `${v.first_name || ''} ${v.last_name || ''}`.trim(),
+        );
+      }
 
-      return {
-        sellers: sellerOptions,
-        customers: customerOptions,
-      };
+      return formatIndexes();
     } catch (error) {
-      console.error('Failed to fetch indexes from server:', error);
+      console.error('Failed to fetch indexes:', error);
       
-      // Fallback на локальные данные ТОЛЬКО если сервер недоступен
-      console.warn('Falling back to local data for indexes');
-      
+      // Fallback на локальные данные
+      console.log('Falling back to local data for indexes');
       sellers = createIndex(
-        sourceData.sellers,
+        sourceData.sellers || [],
         "id",
-        (v) => `${v.first_name} ${v.last_name}`,
+        (v) => `${v.first_name || ''} ${v.last_name || ''}`.trim(),
       );
       
       customers = createIndex(
-        sourceData.customers,
+        sourceData.customers || [],
         "id",
-        (v) => `${v.first_name} ${v.last_name}`,
+        (v) => `${v.first_name || ''} ${v.last_name || ''}`.trim(),
       );
 
-      const sellerOptions = {};
-      const customerOptions = {};
-
-      Object.values(sellers).forEach((name) => {
-        sellerOptions[name] = name;
-      });
-
-      Object.values(customers).forEach((name) => {
-        customerOptions[name] = name;
-      });
-
-      return {
-        sellers: sellerOptions,
-        customers: customerOptions,
-      };
+      return formatIndexes();
     }
+  };
+
+  // Вспомогательная функция для форматирования индексов
+  const formatIndexes = () => {
+    const sellerOptions = {};
+    const customerOptions = {};
+
+    if (sellers) {
+      Object.values(sellers).forEach((name) => {
+        if (name && typeof name === 'string') {
+          sellerOptions[name] = name;
+        }
+      });
+    }
+
+    if (customers) {
+      Object.values(customers).forEach((name) => {
+        if (name && typeof name === 'string') {
+          customerOptions[name] = name;
+        }
+      });
+    }
+
+    return {
+      sellers: sellerOptions,
+      customers: customerOptions,
+    };
   };
 
   // Функция фильтрации записей на клиенте (для fallback-режима)
@@ -136,14 +178,16 @@ export function initData(sourceData) {
     if (!records || !Array.isArray(records)) return [];
     
     return records.filter((record) => {
+      if (!record) return false;
+      
       // Поиск по всем полям
       if (query.search) {
         const searchTerm = query.search.toLowerCase();
-        const sellerName = sellers && sellers[record.seller_id] ? sellers[record.seller_id].toLowerCase() : "";
-        const customerName = customers && customers[record.customer_id] ? customers[record.customer_id].toLowerCase() : "";
+        const sellerName = sellers && sellers[record.seller_id] ? sellers[record.seller_id].toLowerCase() : '';
+        const customerName = customers && customers[record.customer_id] ? customers[record.customer_id].toLowerCase() : '';
 
         const matchesSearch =
-          (record.date && record.date.includes(searchTerm)) ||
+          (record.date && record.date.toLowerCase().includes(searchTerm)) ||
           sellerName.includes(searchTerm) ||
           customerName.includes(searchTerm) ||
           (record.total_amount && record.total_amount.toString().includes(searchTerm));
@@ -152,48 +196,40 @@ export function initData(sourceData) {
       }
 
       // Фильтр по дате
-      if (
-        query["filter[date]"] &&
-        record.date &&
-        !record.date.includes(query["filter[date]"])
-      ) {
-        return false;
+      if (query["filter[date]"] && record.date) {
+        if (!record.date.includes(query["filter[date]"])) {
+          return false;
+        }
       }
 
       // Фильтр по покупателю
       if (query["filter[customer]"]) {
-        const customerName = customers && customers[record.customer_id] ? customers[record.customer_id] : "";
-        if (
-          !customerName
-            .toLowerCase()
-            .includes(query["filter[customer]"].toLowerCase())
-        ) {
+        const customerName = customers && customers[record.customer_id] ? customers[record.customer_id] : '';
+        if (!customerName.toLowerCase().includes(query["filter[customer]"].toLowerCase())) {
           return false;
         }
       }
 
       // Фильтр по продавцу
       if (query["filter[seller]"]) {
-        const sellerName = sellers && sellers[record.seller_id] ? sellers[record.seller_id] : "";
+        const sellerName = sellers && sellers[record.seller_id] ? sellers[record.seller_id] : '';
         if (sellerName !== query["filter[seller]"]) {
           return false;
         }
       }
 
       // Фильтр по сумме (от)
-      if (
-        query["filter[totalFrom]"] &&
-        record.total_amount < Number(query["filter[totalFrom]"])
-      ) {
-        return false;
+      if (query["filter[totalFrom]"] && record.total_amount) {
+        if (record.total_amount < Number(query["filter[totalFrom]"])) {
+          return false;
+        }
       }
 
       // Фильтр по сумме (до)
-      if (
-        query["filter[totalTo]"] &&
-        record.total_amount > Number(query["filter[totalTo]"])
-      ) {
-        return false;
+      if (query["filter[totalTo]"] && record.total_amount) {
+        if (record.total_amount > Number(query["filter[totalTo]"])) {
+          return false;
+        }
       }
 
       return true;
@@ -210,11 +246,11 @@ export function initData(sourceData) {
       let valueA, valueB;
 
       if (field === "date") {
-        valueA = new Date(a.date).getTime();
-        valueB = new Date(b.date).getTime();
+        valueA = a.date ? new Date(a.date).getTime() : 0;
+        valueB = b.date ? new Date(b.date).getTime() : 0;
       } else if (field === "total") {
-        valueA = a.total_amount;
-        valueB = b.total_amount;
+        valueA = a.total_amount || 0;
+        valueB = b.total_amount || 0;
       } else {
         return 0;
       }
@@ -240,18 +276,52 @@ export function initData(sourceData) {
     }
 
     try {
-      // Получаем данные с сервера
-      const response = await fetchFromServer('/purchases', query);
-      
       // Получаем индексы, если их еще нет
-      if (!sellers || !customers) {
+      if (!sellers || !customers || Object.keys(sellers).length === 0) {
         await getIndexes();
+      }
+
+      // Пытаемся получить данные с сервера
+      console.log('Fetching records from server with query:', query);
+      const response = await fetchFromServer('/purchases', query).catch(err => {
+        console.warn('Failed to fetch from server, using local data');
+        return null;
+      });
+
+      let total, items;
+
+      if (response && response.items && Array.isArray(response.items)) {
+        // Используем серверные данные
+        total = response.total || response.items.length;
+        items = response.items;
+        console.log('Using server data:', items.length, 'items');
+      } else {
+        // Fallback на локальные данные
+        console.log('Using local data');
+        const records = sourceData.purchase_records || [];
+        
+        // Фильтруем записи локально
+        let filteredRecords = filterRecordsLocally(records, query);
+
+        // Сортируем записи
+        if (query.sort) {
+          filteredRecords = sortRecordsLocally(filteredRecords, query.sort);
+        }
+
+        // Применяем пагинацию
+        const limit = Number(query.limit) || 10;
+        const page = Number(query.page) || 1;
+        const start = (page - 1) * limit;
+        const end = start + limit;
+
+        items = filteredRecords.slice(start, end);
+        total = filteredRecords.length;
       }
 
       lastQuery = nextQuery;
       lastResult = {
-        total: response.total || 0,
-        items: response.items ? mapRecords(response.items) : [],
+        total: total || 0,
+        items: mapRecords(items),
       };
 
       // Сохраняем в кеш
@@ -263,49 +333,15 @@ export function initData(sourceData) {
         queryCache.delete(firstKey);
       }
 
-      console.log('Data loaded from server:', lastResult.items.length, 'items');
       return lastResult;
     } catch (error) {
-      console.error('Failed to fetch records from server:', error);
+      console.error('Failed to get records:', error);
       
-      // Fallback на локальные данные ТОЛЬКО если сервер недоступен
-      console.warn('Falling back to local data filtering');
-      
-      // Получаем индексы, если их еще нет
-      if (!sellers || !customers) {
-        await getIndexes();
-      }
-
-      // Используем локальные данные для fallback
-      const records = sourceData.purchase_records || [];
-      
-      // Фильтруем записи локально
-      let filteredRecords = filterRecordsLocally(records, query);
-
-      // Сортируем записи
-      if (query.sort) {
-        filteredRecords = sortRecordsLocally(filteredRecords, query.sort);
-      }
-
-      // Применяем пагинацию
-      const limit = Number(query.limit) || 10;
-      const page = Number(query.page) || 1;
-      const start = (page - 1) * limit;
-      const end = start + limit;
-
-      const paginatedRecords = filteredRecords.slice(start, end);
-
-      lastQuery = nextQuery;
-      lastResult = {
-        total: filteredRecords.length,
-        items: mapRecords(paginatedRecords),
+      // Возвращаем пустой результат в случае ошибки
+      return {
+        total: 0,
+        items: [],
       };
-
-      // Сохраняем в кеш
-      queryCache.set(cacheKey, lastResult);
-
-      console.log('Fallback data loaded:', lastResult.items.length, 'items');
-      return lastResult;
     }
   };
 
