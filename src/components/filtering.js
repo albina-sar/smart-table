@@ -4,18 +4,36 @@ export function initFiltering(elements) {
     Object.keys(indexes).forEach((elementName) => {
       const select = elements[elementName];
       if (select) {
-        // Очищаем существующие опции, кроме первой
+        // Добавляем обработчик ошибок для select
+        select.addEventListener("error", (e) => {
+          console.error("Error loading select options:", e);
+        });
+
+        // Очищаем существующие опции, кроме первой (пустой опции)
         while (select.options.length > 1) {
           select.remove(1);
         }
 
         // Добавляем новые опции
-        Object.values(indexes[elementName]).forEach((name) => {
-          const el = document.createElement("option");
-          el.textContent = name;
-          el.value = name;
-          select.appendChild(el);
-        });
+        try {
+          Object.values(indexes[elementName]).forEach((name) => {
+            if (name && typeof name === "string") {
+              const el = document.createElement("option");
+              el.textContent = name;
+              el.value = name;
+              select.appendChild(el);
+            }
+          });
+        } catch (error) {
+          console.error(`Error adding options to ${elementName}:`, error);
+
+          // Добавляем опцию с ошибкой для информирования пользователя
+          const errorOption = document.createElement("option");
+          errorOption.textContent = "Error loading options";
+          errorOption.value = "";
+          errorOption.disabled = true;
+          select.appendChild(errorOption);
+        }
       }
     });
   };
@@ -48,20 +66,66 @@ export function initFiltering(elements) {
         if (
           isFilterField &&
           ["INPUT", "SELECT"].includes(element.tagName) &&
-          element.value
+          element.value &&
+          element.value.trim() !== ""
         ) {
-          filter[`filter[${element.name}]`] = element.value;
+          // Для числовых полей проверяем, что значение действительно число
+          if (key === "totalFrom" || key === "totalTo") {
+            const numValue = Number(element.value);
+            if (!isNaN(numValue)) {
+              filter[`filter[${element.name}]`] = numValue;
+            }
+          } else {
+            filter[`filter[${element.name}]`] = element.value.trim();
+          }
         }
       }
     });
+
+    // Логируем параметры фильтрации для отладки
+    if (Object.keys(filter).length > 0) {
+      console.log("Applying filters:", filter);
+    }
 
     return Object.keys(filter).length
       ? Object.assign({}, query, filter)
       : query;
   };
 
+  // Функция для сброса всех фильтров
+  const resetFilters = () => {
+    Object.keys(elements).forEach((key) => {
+      const element = elements[key];
+      if (element && ["INPUT", "SELECT"].includes(element.tagName)) {
+        if (element.tagName === "SELECT") {
+          element.selectedIndex = 0;
+        } else {
+          element.value = "";
+        }
+      }
+    });
+  };
+
+  // Функция для получения текущих значений фильтров
+  const getFilterValues = () => {
+    const values = {};
+    Object.keys(elements).forEach((key) => {
+      const element = elements[key];
+      if (
+        element &&
+        ["INPUT", "SELECT"].includes(element.tagName) &&
+        element.value
+      ) {
+        values[key] = element.value;
+      }
+    });
+    return values;
+  };
+
   return {
     updateIndexes,
     applyFiltering,
+    resetFilters,
+    getFilterValues,
   };
 }

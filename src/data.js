@@ -10,6 +10,9 @@ export function initData(sourceData) {
   let lastResult;
   let lastQuery;
 
+  // Кеш для запросов
+  const queryCache = new Map();
+
   // Функция для создания индексов из массива объектов
   const createIndex = (array, idField, formatter) => {
     return array.reduce((acc, item) => {
@@ -28,7 +31,204 @@ export function initData(sourceData) {
       total: item.total_amount,
     }));
 
-  // Функция фильтрации записей на клиенте (для мок-режима)
+  // Функция для получения данных с сервера
+  const fetchFromServer = async (endpoint, params = {}) => {
+    const url = new URL(`${BASE_URL}${endpoint}`);
+
+    // Добавляем параметры запроса
+    Object.keys(params).forEach((key) => {
+      if (
+        params[key] !== undefined &&
+        params[key] !== null &&
+        params[key] !== ""
+      ) {
+        url.searchParams.append(key, params[key]);
+      }
+    });
+
+    try {
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error(`Error fetching from ${endpoint}:`, error);
+      throw error;
+    }
+  };
+
+  // функция получения индексов с сервера
+  const getIndexes = async () => {
+    // Используем кеш, если данные уже загружены
+    if (sellers && customers) {
+      // Преобразуем индексы в формат для отображения в селектах
+      const sellerOptions = {};
+      const customerOptions = {};
+
+      Object.values(sellers).forEach((name) => {
+        sellerOptions[name] = name;
+      });
+
+      Object.values(customers).forEach((name) => {
+        customerOptions[name] = name;
+      });
+
+      return {
+        sellers: sellerOptions,
+        customers: customerOptions,
+      };
+    }
+
+    try {
+      // Загружаем данные с сервера параллельно
+      const [sellersData, customersData] = await Promise.all([
+        fetchFromServer("/sellers"),
+        fetchFromServer("/customers"),
+      ]);
+
+      // Создаем индексы
+      sellers = createIndex(
+        sellersData,
+        "id",
+        (v) => `${v.first_name} ${v.last_name}`,
+      );
+
+      customers = createIndex(
+        customersData,
+        "id",
+        (v) => `${v.first_name} ${v.last_name}`,
+      );
+
+      // Преобразуем индексы в формат для отображения в селектах
+      const sellerOptions = {};
+      const customerOptions = {};
+
+      Object.values(sellers).forEach((name) => {
+        sellerOptions[name] = name;
+      });
+
+      Object.values(customers).forEach((name) => {
+        customerOptions[name] = name;
+      });
+
+      return {
+        sellers: sellerOptions,
+        customers: customerOptions,
+      };
+    } catch (error) {
+      console.error("Failed to fetch indexes:", error);
+
+      // Fallback на локальные данные в случае ошибки
+      console.warn("Falling back to local data");
+
+      sellers = createIndex(
+        sourceData.sellers,
+        "id",
+        (v) => `${v.first_name} ${v.last_name}`,
+      );
+      customers = createIndex(
+        sourceData.customers,
+        "id",
+        (v) => `${v.first_name} ${v.last_name}`,
+      );
+
+      const sellerOptions = {};
+      const customerOptions = {};
+
+      Object.values(sellers).forEach((name) => {
+        sellerOptions[name] = name;
+      });
+
+      Object.values(customers).forEach((name) => {
+        customerOptions[name] = name;
+      });
+
+      return {
+        sellers: sellerOptions,
+        customers: customerOptions,
+      };
+    }
+  };
+
+  // функция получения записей с сервера
+  const getRecords = async (query) => {
+    const qs = new URLSearchParams(query);
+    const nextQuery = qs.toString();
+
+    // Проверяем кеш
+    const cacheKey = JSON.stringify(query);
+    if (queryCache.has(cacheKey)) {
+      console.log("Returning cached result for:", cacheKey);
+      return queryCache.get(cacheKey);
+    }
+
+    try {
+      // Получаем данные с сервера
+      const response = await fetchFromServer("/purchases", query);
+
+      // Получаем индексы, если их еще нет
+      if (!sellers || !customers) {
+        await getIndexes();
+      }
+
+      lastQuery = nextQuery;
+      lastResult = {
+        total: response.total || 0,
+        items: response.items ? mapRecords(response.items) : [],
+      };
+
+      // Сохраняем в кеш
+      queryCache.set(cacheKey, lastResult);
+
+      // Очищаем старые записи кеша (оставляем последние 50)
+      if (queryCache.size > 50) {
+        const firstKey = queryCache.keys().next().value;
+        queryCache.delete(firstKey);
+      }
+
+      return lastResult;
+    } catch (error) {
+      console.error("Failed to fetch records:", error);
+
+      // Fallback на локальную фильтрацию в случае ошибки
+      console.warn("Falling back to local data filtering");
+
+      // Получаем индексы, если их еще нет
+      if (!sellers || !customers) {
+        await getIndexes();
+      }
+
+      // Фильтруем записи локально
+      let filteredRecords = filterRecords(sourceData.purchase_records, query);
+
+      // Сортируем записи
+      if (query.sort) {
+        filteredRecords = sortRecords(filteredRecords, query.sort);
+      }
+
+      // Применяем пагинацию
+      const limit = Number(query.limit) || 10;
+      const page = Number(query.page) || 1;
+      const start = (page - 1) * limit;
+      const end = start + limit;
+
+      const paginatedRecords = filteredRecords.slice(start, end);
+
+      lastQuery = nextQuery;
+      lastResult = {
+        total: filteredRecords.length,
+        items: mapRecords(paginatedRecords),
+      };
+
+      // Сохраняем в кеш
+      queryCache.set(cacheKey, lastResult);
+
+      return lastResult;
+    }
+  };
+
+  // Функция фильтрации записей на клиенте (для fallback-режима)
   const filterRecords = (records, query) => {
     return records.filter((record) => {
       // Поиск по всем полям
@@ -94,7 +294,7 @@ export function initData(sourceData) {
     });
   };
 
-  // Функция сортировки записей на клиенте (для мок-режима)
+  // Функция сортировки записей на клиенте (для fallback-режима)
   const sortRecords = (records, sortParam) => {
     if (!sortParam) return records;
 
@@ -119,79 +319,6 @@ export function initData(sourceData) {
         return valueB - valueA;
       }
     });
-  };
-
-  // функция получения индексов (МОК-версия)
-  const getIndexes = async () => {
-    if (!sellers || !customers) {
-      // Используем локальные данные
-      sellers = createIndex(
-        sourceData.sellers,
-        "id",
-        (v) => `${v.first_name} ${v.last_name}`,
-      );
-      customers = createIndex(
-        sourceData.customers,
-        "id",
-        (v) => `${v.first_name} ${v.last_name}`,
-      );
-    }
-
-    // Преобразуем индексы в формат для отображения в селектах
-    const sellerOptions = {};
-    const customerOptions = {};
-
-    Object.values(sellers).forEach((name) => {
-      sellerOptions[name] = name;
-    });
-
-    Object.values(customers).forEach((name) => {
-      customerOptions[name] = name;
-    });
-
-    return {
-      sellers: sellerOptions,
-      customers: customerOptions,
-    };
-  };
-
-  // функция получения записей (МОК-версия)
-  const getRecords = async (query) => {
-    const qs = new URLSearchParams(query);
-    const nextQuery = qs.toString();
-
-    if (lastQuery === nextQuery) {
-      return lastResult;
-    }
-
-    // Получаем индексы, если их еще нет
-    if (!sellers || !customers) {
-      await getIndexes();
-    }
-
-    // Фильтруем записи
-    let filteredRecords = filterRecords(sourceData.purchase_records, query);
-
-    // Сортируем записи
-    if (query.sort) {
-      filteredRecords = sortRecords(filteredRecords, query.sort);
-    }
-
-    // Применяем пагинацию
-    const limit = Number(query.limit) || 10;
-    const page = Number(query.page) || 1;
-    const start = (page - 1) * limit;
-    const end = start + limit;
-
-    const paginatedRecords = filteredRecords.slice(start, end);
-
-    lastQuery = nextQuery;
-    lastResult = {
-      total: filteredRecords.length,
-      items: mapRecords(paginatedRecords),
-    };
-
-    return lastResult;
   };
 
   return {
